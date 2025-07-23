@@ -213,49 +213,29 @@ def gsm_cost(IOPs, rrs, aw, bbw, bbpstar, A, B, admstar):
 
     return cost
 
-def gsm_invert(rrs, aw, bbw, bbpstar, A, B, admstar, pnb):
-    """
-    Inputs:
-      rrs:       2D array (n_samples x n_bands)
-      aw, bbw:   1D arrays (n_bands)
-      bbpstar:   1D array (n_bands)
-      A, B:      1D arrays (n_bands)
-      admstar:   1D array (n_bands)
-      pnb:       [unused in this code, kept for signature compatibility]
-    Outputs:
-      IOPs:      2D array (n_samples x 3)
-      output:    last optimization result dict (from fmin)
-    """
+def gsm_invert(rrs, aw, bbw, bbpstar, A, B, admstar):
 
     n_samples = rrs.shape[0]
-    IOPs = np.full((n_samples, 3), np.nan)
+    IOPs = np.array([np.nan, np.nan, np.nan])
     cost = np.full(n_samples, np.nan)
     IOPSinit = [0.15, 0.01, 0.0029]
     output = None  # Store last output
 
-    for i in range(n_samples):
-        rrs_obs = rrs[i, :]
+    def cost_fn(IOPs_trial):
+        return gsm_cost(IOPs_trial, rrs, aw, bbw, bbpstar, A, B, admstar)
 
-        def cost_fn(IOPs_trial):
-            return gsm_cost(IOPs_trial, rrs_obs, aw, bbw, bbpstar, A, B, admstar)
+    iops_opt, _, _, _, _ = fmin(
+        cost_fn,
+        IOPSinit,
+        xtol=1e-9,
+        ftol=1e-9,
+        maxfun=2000,
+        maxiter=2000,
+        full_output=True,
+        disp=False
+    )
 
-        iops_opt, final_cost, _, exitflag, out = fmin(
-            cost_fn,
-            IOPSinit,
-            xtol=1e-9,
-            ftol=1e-9,
-            maxfun=2000,
-            maxiter=2000,
-            full_output=True,
-            disp=False
-        )
-
-        if exitflag == 0:  # 0 means converged in scipy fmin
-            IOPs[i, :] = iops_opt
-            IOPSinit = iops_opt  # Update initial guess for next run
-            output = out
-
-    return IOPs, output
+    return iops_opt
 
 def get_rrs_residuals(Rrs, temp, sal, chl):
     n = len(temp) # number of samples/spectra
@@ -264,11 +244,11 @@ def get_rrs_residuals(Rrs, temp, sal, chl):
     wave = np.arange(400,701)
 
     asw = pd.read_csv('aw_mcf16_350_700_1nm.csv', header=0)
-    asw = asw.iloc[50:,1]
+    asw = asw.iloc[50:,1].values
 
     AB_coefs = pd.read_csv('aph_A_B_Coeffs_Sasha_RSE_paper.csv', header=0)
-    A = AB_coefs.iloc[50:,1]
-    B = AB_coefs.iloc[50:,2]
+    A = AB_coefs.iloc[50:,1].values
+    B = AB_coefs.iloc[50:,2].values
 
     Rrs_490 = Rrs['490'].values
     Rrs_555 = Rrs['555'].values
@@ -276,54 +256,53 @@ def get_rrs_residuals(Rrs, temp, sal, chl):
     acdm_s = -(0.01447 + 0.00033 * Rrs_490 / Rrs_555)  
     acdm = np.exp(np.outer(acdm_s, wave - 443))  # shape: (n_samples, n_wavelengths)
 
-    # Assuming T and S are iterable (e.g., lists or arrays) and wave is defined
     bsw = []
 
     for i in range(n):
-        _, bsw_i, _ = betasw124_ZHH2009(wave, float(sal[i]), float(temp[i]))  # use None for empty param
+        _, bsw_i, _, _ = betasw124_ZHH2009(wave, float(sal[i]), float(temp[i])) 
         bsw.append(bsw_i)
 
-    bsw = np.array(bsw)         # shape (1, n) if bsw_i is 1D array length n
-    bbsw = 0.5 * bsw.T         # transpose to shape (n, 1) and multiply by 0.5
+    bsw = np.array(bsw)        
+    bbsw = 0.5 * bsw.T         
 
     Rrs_440 = Rrs['440'].values
 
     bbp_s = 2.0 * (1 - 1.2 * np.exp(-0.9 * Rrs_440 / Rrs_555))
-    bbp = (443 / wave.reshape(-1, 1)) ** bbp_s  # shapes must be compatible for broadcasting
+    bbp = (443 / wave.reshape(-1, 1)) ** bbp_s 
 
-    IOPs = np.empty((n, 3))  # adjust 3 if needed
+    IOPs = np.empty((n, 3))
 
-    for i in range(n):  # Python 0-based index
-        # Extract vectors and transpose vectors
-        rrs_i = rrs.iloc[:, i].values.T         
-        asw_t = asw.values.T                     
-        bbsw_i = bbsw.iloc[:, i].values.T       
-        bbp_i = bbp.iloc[:, i].values.T        
-        A_t = A.values.T                     
-        B_t = B.values.T                     
-        acdm_i = acdm.iloc[:, i].values.T  
+    for i in range(n):  
+        rrs_i = rrs.iloc[i, :].values
+        asw_t = asw               
+        bbsw_i = bbsw[:, i]
+        bbp_i = bbp[:, i]
+        A_t = A
+        B_t = B
+        acdm_i = acdm[i, :]
 
-        # Call your gsm_invert function
-        iops_i, _ = gsm_invert(rrs_i, asw_t, bbsw_i, bbp_i, A_t, B_t, acdm_i)
-
-        # Store result
+        iops_i = gsm_invert(rrs_i, asw_t, bbsw_i, bbp_i, A_t, B_t, acdm_i)
         IOPs[i, :] = iops_i
 
-    print(IOPs)
+    asw_ = asw[:, np.newaxis]
+    A_ = A[:, np.newaxis]
+    B_ = B[:, np.newaxis]
 
+    # Compute a and bb
+    a = asw_ + (A_ * (IOPs[:, 0]**B_)) + (acdm.T * IOPs[:, 1])
+    bb = bbsw + bbp * IOPs[:, 2]
 
+    # Gordon coefficients
+    g1, g2 = 0.0949, 0.0794
 
-def read_inputs():
-    data = pd.read_csv('EXP_NP_NA_HPLC_Rrs.csv', header=0)
+    rrsP = bb / (a + bb)
+    modrrs = (g1 + g2 * rrsP) * rrsP
 
-    sal = data.loc[:,'Salinity']
-    temp = data.loc[:,'Temperature']
-    Rrs = data.loc[:,'Rrs400':]
-    chl = data.loc[:,'Tchla (mg m^-3)':'Pras']
+    # convert back to Rrs
+    modRrs = (0.52 * modrrs) / (1 - 1.7 * modrrs)
 
-    return Rrs, sal, temp, chl
+    # Residual between measured and modeled (to use for Kramer_Rrs_pigments)
+    rrsD = rrs.T - modrrs
+    RrsD = Rrs.T - modRrs
 
-if __name__ == "__main__":
-    Rrs, sal, temp, chl = read_inputs()
-
-    get_rrs_residuals(Rrs, sal, temp, chl)
+    return rrsD, RrsD
