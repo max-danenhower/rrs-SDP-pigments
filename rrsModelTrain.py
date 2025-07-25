@@ -1,7 +1,7 @@
 import numpy as np
 from sklearn.linear_model import LinearRegression
-from sklearn.metrics import root_mean_squared_error, r2_score
-from matplotlib import pyplot as plt
+from sklearn.metrics import root_mean_squared_error
+import pandas as pd
 
 
 def rrsModelTrain(daph, pft, pft_index, n_permutations, max_pcs, k, mdl_pick_metric, output_file_name):
@@ -29,17 +29,27 @@ def rrsModelTrain(daph, pft, pft_index, n_permutations, max_pcs, k, mdl_pick_met
     # set random number generator seed for reproducibility
     np.random.seed(42)
 
+    # preallocate coefficients array
     mean_betas_nonstd = np.zeros((spectra_4_mdl.shape[1], n_permutations))
     mean_alphas_nonstd = np.zeros(n_permutations)
 
-    for i in range(1):
+    # preallocate statistics/metrics arrays
+    R2s_final = np.zeros(n_permutations)
+    RMSEs_final = np.zeros(n_permutations)
+    pct_bias = np.zeros(n_permutations)
+    pct_errors = np.zeros((n_permutations,k))
+    med_pct_error = np.zeros(n_permutations)
+    avg_pct_error = np.zeros(n_permutations)
+    CI_pct_error = np.zeros(n_permutations)
+    std_pct_error = np.zeros(n_permutations)
+    mae_final = np.zeros(n_permutations)
+
+    for i in range(n_permutations):
         # Create broad training data (75%) and validation data (25%)
-        '''
         training_indices = np.random.permutation(len(pft))[:int(len(pft) * 0.75)]
-        '''
 
         # hard code for now
-        training_indices = np.array([18,10,5,1,6,9,7,2,14,4,13,17,8,3])-1  # Example indices for training, -1 for 0 indexing
+        #training_indices = np.array([18,10,5,1,6,9,7,2,14,4,13,17,8,3])-1  # Example indices for training, -1 for 0 indexing
 
         pigs_training = pft[training_indices]
         spectra_4_mdl_training = spectra_4_mdl[training_indices,:]
@@ -55,12 +65,10 @@ def rrsModelTrain(daph, pft, pft_index, n_permutations, max_pcs, k, mdl_pick_met
         pig_len = len(pigs_training)
         train_split = pig_len/k
 
-        '''
         rand_ns = np.random.permutation(pig_len)
-        '''
-        # hard code for now
-        rand_ns = np.array([11, 3, 1, 8, 4, 6, 9, 7, 14, 12, 10, 2, 5, 13]) - 1  # -1 for 0 indexing
 
+        # hard code for now
+        #rand_ns = np.array([11, 3, 1, 8, 4, 6, 9, 7, 14, 12, 10, 2, 5, 13]) - 1  # -1 for 0 indexing
 
         CV_indices = np.full((k, int(np.ceil(train_split))+1), np.nan)
         n_leftovers = int(np.round((train_split - (int(train_split))) * k))
@@ -84,7 +92,7 @@ def rrsModelTrain(daph, pft, pft_index, n_permutations, max_pcs, k, mdl_pick_met
         CV_indices = np.hstack([CV_indices, leftovers])
         # so now CV indices contains k sets of random indices for k-fold CV
 
-        # preallocate arrays to hold evaluation metrics
+        # preallocate arrays
         n_modes_to_use = np.zeros(k, dtype=int)
         betas = np.zeros((spectra_4_mdl_training.shape[1], k))
         alpha = np.zeros(k)
@@ -189,8 +197,6 @@ def rrsModelTrain(daph, pft, pft_index, n_permutations, max_pcs, k, mdl_pick_met
             # 5-CV model validation
             CV_modeled_pigs = CV_valid_spec @ betas[:, j] + alpha[j]
 
-            print(CV_modeled_pigs)
-
             if pft_index == 'pigment':
                 CV_modeled_pigs[CV_modeled_pigs < 0] = 0
             elif pft_index == 'compositions':
@@ -223,7 +229,78 @@ def rrsModelTrain(daph, pft, pft_index, n_permutations, max_pcs, k, mdl_pick_met
         mean_betas_nonstd[:, i] = mean_betas / spec_std
         mean_alphas_nonstd[i] = mean_alphas - np.sum(mean_betas * (spec_mean / spec_std))
 
-        print(mean_alphas_nonstd)
-        print(mean_betas_nonstd)
+        # Validate on the data you set aside previously for this ith run of the n_permutations using mean betas of this
+        # permutation from cross-validation, and store g.o.f stats across permutations:
+        modeled_pigs = spectra_4_mdl_validate @ mean_betas_nonstd[:,i] + mean_alphas_nonstd[i]
 
-    return coefficients, intercepts, summary_gofs, all_gofs
+        if pft_index == 'pigment':
+            modeled_pigs[modeled_pigs < 0] = 0
+        elif pft_index == 'compositions':
+            modeled_pigs = np.clip(modeled_pigs, 0, 1)
+        elif pft_index == 'EOFs':
+            pass # No constraints applied
+
+        # Fit linear model
+        model = LinearRegression().fit(modeled_pigs.reshape(-1, 1), pigs_validate)
+
+        # Save R² and RMSE
+        R2s_final[i] = model.score(modeled_pigs.reshape(-1, 1), pigs_validate)
+        RMSEs_final[i] = np.sqrt(root_mean_squared_error(pigs_validate, model.predict(modeled_pigs.reshape(-1, 1))))
+
+        # Avoid division by zero by replacing 0 with 1e-4
+        pigs_validate_safe = np.where(pigs_validate == 0, 1e-4, pigs_validate)
+
+        # Percent bias and errors
+        pct_bias[i] = np.mean(((modeled_pigs - pigs_validate_safe) / pigs_validate_safe) * 100)
+        pct_errors[i, :] = np.abs(((modeled_pigs - pigs_validate_safe) / pigs_validate_safe) * 100)
+        med_pct_error[i] = np.median(pct_errors[i, :])
+        avg_pct_error[i] = np.mean(pct_errors[i, :])
+
+        # 95th percentile confidence interval
+        sort_pct_errors = np.sort(pct_errors[i, :])
+        CI_pct_error[i] = sort_pct_errors[int(np.ceil(0.95 * len(sort_pct_errors))) - 1]
+
+        # Standard deviation of percent error
+        std_pct_error[i] = np.std(pct_errors[i, :])
+
+        # Mean absolute error
+        mae_final[i] = np.mean(np.abs(modeled_pigs - pigs_validate))
+
+        # Print progress
+        print(f"hey dude, im doing good. im on permutation # {i}")
+
+    coefficients = mean_betas_nonstd
+    intercepts = mean_alphas_nonstd
+
+
+    # === Summary stats ===
+    summary_gofs = [
+        np.mean(R2s_final), np.std(R2s_final),
+        np.mean(RMSEs_final), np.std(RMSEs_final),
+        np.mean(avg_pct_error), np.std(avg_pct_error),
+        np.mean(med_pct_error), np.std(med_pct_error),
+        np.mean(pct_bias), np.std(pct_bias),
+        np.mean(mae_final), np.std(mae_final)
+    ]
+
+    summary_gofs_df = pd.DataFrame([summary_gofs], columns=[
+        'Mean_R2', 'SD_R2',
+        'Mean_RMSE', 'SD_RMSE',
+        'Mean_mean_pct_error', 'SD_mean_pct_error',
+        'Mean_median_pct_error', 'SD_median_pct_error',
+        'Mean_pct_bias', 'SD_pct_bias',
+        'Mean_MAE', 'SD_MAE'
+    ])
+
+    # === All individual stats ===
+    all_gofs = {
+        'R2s': R2s_final,
+        'RMSEs': RMSEs_final,
+        'mean_pct_error': avg_pct_error,
+        'median_pct_error': med_pct_error,
+        'pct_bias': pct_bias,
+        'all_pct_errors': pct_errors,
+        'all_mae': mae_final
+    }
+
+    return coefficients, intercepts, summary_gofs_df, all_gofs
