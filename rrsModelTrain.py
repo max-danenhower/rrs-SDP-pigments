@@ -267,11 +267,10 @@ def rrsModelTrain(daph, pft, pft_index, n_permutations, max_pcs, k, mdl_pick_met
         mae_final[i] = np.mean(np.abs(modeled_pigs - pigs_validate))
 
         # Print progress
-        print(f"hey dude, im doing good. im on permutation # {i}")
+        #print(f"hey dude, im doing good. im on permutation # {i}")
 
     coefficients = mean_betas_nonstd
     intercepts = mean_alphas_nonstd
-
 
     # === Summary stats ===
     summary_gofs = [
