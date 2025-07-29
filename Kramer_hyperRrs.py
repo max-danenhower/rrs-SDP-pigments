@@ -237,7 +237,7 @@ def gsm_invert(rrs, aw, bbw, bbpstar, A, B, admstar):
 
     return iops_opt
 
-def get_rrs_residuals(Rrs, temp, sal, chl):
+def get_rrs_residuals(Rrs, temp, sal):
     n = len(temp) # number of samples/spectra
 
     rrs = Rrs / (0.52 + 1.7 * Rrs)
@@ -250,8 +250,8 @@ def get_rrs_residuals(Rrs, temp, sal, chl):
     A = AB_coefs.iloc[50:,1].values
     B = AB_coefs.iloc[50:,2].values
 
-    Rrs_490 = Rrs['490'].values
-    Rrs_555 = Rrs['555'].values
+    Rrs_490 = Rrs[490].values
+    Rrs_555 = Rrs[555].values
 
     acdm_s = -(0.01447 + 0.00033 * Rrs_490 / Rrs_555)  
     acdm = np.exp(np.outer(acdm_s, wave - 443))  # shape: (n_samples, n_wavelengths)
@@ -265,7 +265,7 @@ def get_rrs_residuals(Rrs, temp, sal, chl):
     bsw = np.array(bsw)        
     bbsw = 0.5 * bsw.T         
 
-    Rrs_440 = Rrs['440'].values
+    Rrs_440 = Rrs[440].values
 
     bbp_s = 2.0 * (1 - 1.2 * np.exp(-0.9 * Rrs_440 / Rrs_555))
     bbp = (443 / wave.reshape(-1, 1)) ** bbp_s 

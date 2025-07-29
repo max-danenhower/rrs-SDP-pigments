@@ -3,7 +3,6 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import root_mean_squared_error
 import pandas as pd
 
-
 def rrsModelTrain(daph, pft, pft_index, n_permutations, max_pcs, k, mdl_pick_metric, output_file_name):
     coefficients = None
     intercepts = None
@@ -37,7 +36,7 @@ def rrsModelTrain(daph, pft, pft_index, n_permutations, max_pcs, k, mdl_pick_met
     R2s_final = np.zeros(n_permutations)
     RMSEs_final = np.zeros(n_permutations)
     pct_bias = np.zeros(n_permutations)
-    pct_errors = np.zeros((n_permutations,k))
+    pct_errors = np.zeros((n_permutations,len(pft)-int(len(pft) * 0.75))) # 25% of the data for validation
     med_pct_error = np.zeros(n_permutations)
     avg_pct_error = np.zeros(n_permutations)
     CI_pct_error = np.zeros(n_permutations)
@@ -46,10 +45,12 @@ def rrsModelTrain(daph, pft, pft_index, n_permutations, max_pcs, k, mdl_pick_met
 
     for i in range(n_permutations):
         # Create broad training data (75%) and validation data (25%)
-        training_indices = np.random.permutation(len(pft))[:int(len(pft) * 0.75)]
+        '''
+        hard code training split
 
-        # hard code for now
-        #training_indices = np.array([18,10,5,1,6,9,7,2,14,4,13,17,8,3])-1  # Example indices for training, -1 for 0 indexing
+        training_indices = np.arange(int(len(pft) * 0.75))
+        '''
+        training_indices = np.random.permutation(len(pft))[:int(len(pft) * 0.75)]
 
         pigs_training = pft[training_indices]
         spectra_4_mdl_training = spectra_4_mdl[training_indices,:]
@@ -63,34 +64,31 @@ def rrsModelTrain(daph, pft, pft_index, n_permutations, max_pcs, k, mdl_pick_met
         # get set up for k-fold cross validation
 
         pig_len = len(pigs_training)
-        train_split = pig_len/k
 
+        '''
+        hardcode rand_ns
+
+        rand_ns = np.arange(pig_len)
+
+        '''
         rand_ns = np.random.permutation(pig_len)
 
-        # hard code for now
-        #rand_ns = np.array([11, 3, 1, 8, 4, 6, 9, 7, 14, 12, 10, 2, 5, 13]) - 1  # -1 for 0 indexing
-
-        CV_indices = np.full((k, int(np.ceil(train_split))+1), np.nan)
-        n_leftovers = int(np.round((train_split - (int(train_split))) * k))
-        counter_start = n_leftovers + 1
-        counter_end = n_leftovers + int(train_split)
-
+        CV_indices = np.full((k, int(np.ceil(len(pigs_training) / k))), np.nan)
+        n_leftovers = pig_len % k
+        counter_start = n_leftovers
+        counter_end = n_leftovers + pig_len // k
         for j in range(k):
-            CV_indices[j, 0:int(train_split)] = rand_ns[counter_start-1:counter_end]
-            counter_start += int(train_split)
-            counter_end += int(train_split)
+            CV_indices[j, :(pig_len // k)] = rand_ns[counter_start:counter_end]
+            counter_start += pig_len // k
+            counter_end += pig_len // k
 
         # add the leftovers to the CV_indices array, and put NaN's for the sets
         # where there's not enough leftovers to go around
-        leftovers = rand_ns[:n_leftovers-1]
-        # Pad with NaNs if leftovers < k
-        if len(leftovers) < k:
-            pad = np.full(k - len(leftovers), np.nan)
-            leftovers = np.concatenate([leftovers, pad])
-        # Add a new column (grow to k x (num_folds + 1))
-        leftovers = leftovers.reshape(k, 1)
-        CV_indices = np.hstack([CV_indices, leftovers])
-        # so now CV indices contains k sets of random indices for k-fold CV
+        leftovers = rand_ns[:n_leftovers]
+        na_array = np.full((k - len(leftovers)), np.nan)
+        leftovers = np.concatenate([leftovers, na_array])
+
+        CV_indices[:, CV_indices.shape[1]-1] = leftovers
 
         # preallocate arrays
         n_modes_to_use = np.zeros(k, dtype=int)
@@ -132,7 +130,7 @@ def rrsModelTrain(daph, pft, pft_index, n_permutations, max_pcs, k, mdl_pick_met
             pearson = np.zeros(CV_AFs_train.shape[1])
 
             # Loop over number of components used in model
-            for l in range(1,CV_AFs_train.shape[1] + 1):
+            for l in range(1, CV_AFs_train.shape[1]+1):
                 # Multiple linear regression (MLR) using first l amplitude functions
                 lin_model = LinearRegression()
                 lin_model.fit(CV_AFs_train[:, :l], CV_train_pigs)
