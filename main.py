@@ -6,7 +6,10 @@ import numpy as np
 def main():
     '''
     Read in Rrs, temperature, and salinity data. 
-    Define wavelengths corresponding to the Rrs spectra
+    Define wavelengths corresponding to the Rrs spectra.
+
+    Run Kramer_hyperRrs to get Rrs residuals.
+    Run Kramer_Rrs_pigments to run train the model.
     '''
 
     data = pd.read_excel('HPLC_Rrs_forAli_2025.xlsx', header=0)
@@ -16,11 +19,12 @@ def main():
     Rrs = data.loc[:,'Rrs400':]
     wavelegnths = np.arange(400,701)
 
+    # get Rrs residuals
     rrsD, RrsD = Kramer_hyperRrs.get_rrs_residuals(Rrs, temp, sal, wavelegnths)
-    print(rrsD.shape)
 
     hplc = data.loc[:,'Tchla':'Pras'].values
 
+    # train model
     Kramer_Rrs_pigments.train_model(RrsD, hplc)
 
 def run_python_coefs():
