@@ -45,11 +45,7 @@ def rrsModelTrain(daph, pft, pft_index, n_permutations, max_pcs, k, mdl_pick_met
 
     for i in range(n_permutations):
         # Create broad training data (75%) and validation data (25%)
-        '''
-        hard code training split
 
-        training_indices = np.arange(int(len(pft) * 0.75))
-        '''
         training_indices = np.random.permutation(len(pft))[:int(len(pft) * 0.75)]
 
         pigs_training = pft[training_indices]
@@ -65,12 +61,6 @@ def rrsModelTrain(daph, pft, pft_index, n_permutations, max_pcs, k, mdl_pick_met
 
         pig_len = len(pigs_training)
 
-        '''
-        hardcode rand_ns
-
-        rand_ns = np.arange(pig_len)
-
-        '''
         rand_ns = np.random.permutation(pig_len)
 
         CV_indices = np.full((k, int(np.ceil(len(pigs_training) / k))), np.nan)

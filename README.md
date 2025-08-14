@@ -1,9 +1,9 @@
 # rrs-SDP-pigments
-translating Kramer Rrs SDP method from MATLAB to python
+Translating Kramer Rrs SDP method from MATLAB to python. Original GitHub can be found at https://github.com/sashajane19/Rrs_pigments
 
-Work in progress (code is incomplete). Original GitHub can be found at https://github.com/sashajane19/Rrs_pigments
+Run main.py to generate SDP coefficients. main.py requires Rrs spectra, temperature, and salinity. Coefficients are saved to an excel sheet. 
 
-Papers where methods were used
+Papers where methods were used:
 
 Kramer, S.J., D.A. Siegel, S. Maritorena, D. Catlett (2022). Modeling surface ocean phytoplankton pigments from hyperspectral remote sensing reflectance on global scales. Remote Sensing of Environment, 270, 1-14, https://doi.org/10.1016/j.rse.2021.112879.
 

@@ -49,31 +49,6 @@ def run_python_coefs():
     median_runs[median_runs < 0] = 0
     print(median_runs)
 
-def run_matlab_coefs():
-    a = pd.read_csv('tchla_hc.csv')
-    c = pd.read_csv('tchla_hi.csv', header=None)
-    drrs = pd.read_csv('hgsmD2.csv')
-
-    median_runs = np.zeros(len(drrs))
-
-    for i in range(len(drrs)):
-        spectra = drrs.iloc[i,:].values
-        all_runs = np.zeros(100)
-
-        for j in range(100):
-            a_run = a.iloc[:,j+1].values
-            c_run = c.iloc[:,j].values
-
-            run = np.sum(a_run * spectra) + c_run
-            all_runs[j] = run[0]
-        
-        median_runs[i] = np.median(all_runs)
-
-    # remove values below zero
-    median_runs[median_runs < 0] = 0
-    print(median_runs)
-
 if __name__ == "__main__":
     main()
     #run_python_coefs()
-    #run_matlab_coefs()
