@@ -3,27 +3,90 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import root_mean_squared_error
 import pandas as pd
 
-def rrsModelTrain(daph, pft, pft_index, n_permutations, max_pcs, k, mdl_pick_metric, output_file_name):
+def rrsModelTrain(RrsD, hplc_i, pft_index, n_permutations, max_pcs, k, mdl_pick_metric):
+    '''
+    Run the PCA model.
+
+    Parameters:
+    -----------
+    1. RrsD: numpy array (n_samples, n_wavelenghts)
+        each spectrum/observation should be a row, and each RrsD(lambda) value a column
+        (note that the model-training slices this data set so that each of the
+        n_permutations blindly validates a model against an unknown validation
+        data set)
+    2. hplc_i: numpy array (n_samples)
+        the corresponding values of the pft index you want to model with
+        your input daph spectra. in other words, the order of observations/rows
+        in pft should align with that in daph.
+    3. pft_index : str
+        specifies any constraints to apply to model outputs. 
+        options: 
+        (A)'pigment' --> model outputs are constrained to be >= 0 at
+        each iteration of the model development. 
+        (B) 'EOFs' --> model outputs are not constrained
+        (C) 'compositions' --> model outputs are constrained to be >= 0 and <= 1
+    4. n_permutations: int
+        the numberof times you want to do the entire cross-validation exercise. 
+    5. max_pcs: int
+        the maximum number of spectral principal components that can
+        be used in model training. the model will test/use all principal components up
+        to and including this number
+        NOTE: because the model optimization chops up your data set, max_pcs needs to 
+        be less than or equal to: 0.75 * (1-1/k) * X; where k is input # 6, X is the number
+        of observations in your data set
+    6. k: int
+        the number of actual model trainings to do for each of the n_permutations 
+        cross-validation iterations. usually 5.
+    7. mdl_pick_metric: str
+        the gof statistic you want to optimize the model off of. 
+        Options:
+        (A) 'R2' --> picks mdls with maximum R2
+        (B) 'RMSE' --> picks mdls with minimum RMSE
+        (C) 'avg' --> minimum mean % error
+        (D) 'med' --> minimum median % error
+        (E) 'MAE' --> mean absolute error - see McKinna et al. 2021: https://agupubs.onlinelibrary.wiley.com/doi/abs/10.1029/2021JC017231 
+    
+    Returns:
+    --------
+    1. coefficients: numpy array (n_permutations, n_wavelengths)
+        an array of model coefficients that is (n_permutations, size(RrsD,2))
+        [which should be the number of wavelengths you've have derivative values for]
+
+    2. intercepts: numpy array (n_permutations)
+        a vector of model intercepts (should be reasonably close
+        to 0) that is 1xn_permutations and contains the correspong intercept for
+        each set of coefficients in coefficients array
+
+    3. summary_gofs: pandas DataFrame
+        a summary table of goodness of fit statistics across all
+        n_permutations of model cross-validations
+
+    4. all_gofs: dict
+        a struct with each field a g.o.f statistic and each entry an
+        array detailing all statistics from each of n_permutation
+        cross-validations
+    '''
+    
     coefficients = None
     intercepts = None
     summary_gofs = None
     all_gofs = None
 
     # check for NaNs
-    if np.isnan(pft).any():
-        print('pft data has NaNs. remove them and try again plz')
+    if np.isnan(hplc_i).any():
+        print('hplc_i data has NaNs. remove them and try again plz')
         return coefficients, intercepts, summary_gofs, all_gofs
-    elif np.isnan(daph).any():
+    elif np.isnan(RrsD).any():
         print('spectral data has NaNs. remove them and try again plz')
         return coefficients, intercepts, summary_gofs, all_gofs
     
-    # check that daph and pft have the same number of rows
-    if daph.shape[0] != pft.shape[0]:
-        print('daph and pft must have the same number of rows')
+    # check that RrsD and pft have the same number of rows
+    if RrsD.shape[0] != hplc_i.shape[0]:
+        print('RrsD and hplc_i must have the same number of rows')
         return coefficients, intercepts, summary_gofs, all_gofs
     
     max_components = max_pcs
-    spectra_4_mdl = daph
+    spectra_4_mdl = RrsD
 
     # set random number generator seed for reproducibility
     np.random.seed(42)
@@ -36,7 +99,7 @@ def rrsModelTrain(daph, pft, pft_index, n_permutations, max_pcs, k, mdl_pick_met
     R2s_final = np.zeros(n_permutations)
     RMSEs_final = np.zeros(n_permutations)
     pct_bias = np.zeros(n_permutations)
-    pct_errors = np.zeros((n_permutations,len(pft)-int(len(pft) * 0.75))) # 25% of the data for validation
+    pct_errors = np.zeros((n_permutations,len(hplc_i)-int(len(hplc_i) * 0.75))) # 25% of the data for validation
     med_pct_error = np.zeros(n_permutations)
     avg_pct_error = np.zeros(n_permutations)
     CI_pct_error = np.zeros(n_permutations)
@@ -46,13 +109,13 @@ def rrsModelTrain(daph, pft, pft_index, n_permutations, max_pcs, k, mdl_pick_met
     for i in range(n_permutations):
         # Create broad training data (75%) and validation data (25%)
 
-        training_indices = np.random.permutation(len(pft))[:int(len(pft) * 0.75)]
+        training_indices = np.random.permutation(len(hplc_i))[:int(len(hplc_i) * 0.75)]
 
-        pigs_training = pft[training_indices]
+        pigs_training = hplc_i[training_indices]
         spectra_4_mdl_training = spectra_4_mdl[training_indices,:]
 
         # validation data
-        pigs_validate = pft
+        pigs_validate = hplc_i
         pigs_validate = np.delete(pigs_validate,training_indices)
         spectra_4_mdl_validate = spectra_4_mdl
         spectra_4_mdl_validate = np.delete(spectra_4_mdl_validate, training_indices, axis=0)

@@ -237,39 +237,77 @@ def gsm_invert(rrs, aw, bbw, bbpstar, A, B, admstar):
 
     return iops_opt
 
-def get_rrs_residuals(Rrs, temp, sal):
+def get_rrs_residuals(Rrs, temp, sal, wavelengths):
+    '''
+    Make a generic model Rrs spectra and compute Rrs residuals (measured Rrs - modeled Rrs) 
+    from Kramer et al. (2022)
+
+    Parameters:
+    -----------
+    Rrs: pandas DataFrame (n_samples, n_wavelengths)
+        Rrs spectra
+    temp: numpy array (n_samples)
+        temperature values corresponding with Rrs spectra
+    sal: numpy array (n_samples)
+        salinity values corresponding with Rrs spectra 
+    wavelengths: numpy array  (n_wavlengths)
+        wavelengths corresponding with Rrs spectra
+
+    Returns:
+    --------
+    rrsD: pandas DataFrame (n_wavelengths, n_samples)
+        just-below surface remote sensing reflectance residual
+    RrsD: pandas DataFrame (n_wavelengths, n_samples)
+        above surface remote-sensing reflectance residual
+    '''
+
     n = len(temp) # number of samples/spectra
 
+    # The model uses reflectance = f(IOPs) from Gordon et al. (1988) which uses
+    # below the surface reflectance (rrs = Lu(0-)/Ed(0-)). If you are using 
+    # above surface reflectance (Rrs = Lu(0+)/Ed(0+)), you will need to convert
+    # your reflectances before running this model, using the equation below from
+    # Lee et al. (2002):
     rrs = Rrs / (0.52 + 1.7 * Rrs)
-    wave = np.arange(400,701)
 
+    # define total absorption as a sum of seawater absorption (asw), phytoplankton absorption (aph) 
+    # and CDOM plus other detrital matter (acdm)
     asw = pd.read_csv('aw_mcf16_350_700_1nm.csv', header=0)
-    asw = asw.iloc[50:,1].values
+    asw = asw.iloc[50:,1].values # corresponds to wavelengths 
 
+    # aph = import A & B coefficients from aph_A_B_Coeffs_Sasha_RSE_paper.csv
+    # aph = A.*chl.^B; inversion model will solve for chl as an output
     AB_coefs = pd.read_csv('aph_A_B_Coeffs_Sasha_RSE_paper.csv', header=0)
     A = AB_coefs.iloc[50:,1].values
     B = AB_coefs.iloc[50:,2].values
 
+    # acdm slope is a function of Rrs (just above surface):
+    # You will need to define Rrs490 and Rrs555 based on your Rrs data
     Rrs_490 = Rrs[490].values
     Rrs_555 = Rrs[555].values
 
     acdm_s = -(0.01447 + 0.00033 * Rrs_490 / Rrs_555)  
-    acdm = np.exp(np.outer(acdm_s, wave - 443))  # shape: (n_samples, n_wavelengths)
+    acdm = np.exp(np.outer(acdm_s, wavelengths - 443))  # shape: (n_samples, n_wavelengths)
 
+    # define backscattering as a sum of seawater backscattering (bbsw) and backscattering by particles (bbp)
+    # bb_tot = bbsw + bbp
     bsw = []
 
+    # bsw comes from Zhang et al. (2009)
     for i in range(n):
-        _, bsw_i, _, _ = betasw124_ZHH2009(wave, float(sal[i]), float(temp[i])) 
+        _, bsw_i, _, _ = betasw124_ZHH2009(wavelengths, float(sal[i]), float(temp[i])) 
         bsw.append(bsw_i)
 
     bsw = np.array(bsw)        
     bbsw = 0.5 * bsw.T         
 
+    # bbp slope is a function of rrs (just below surface):
+    # You will need to define rrs440 and rrs555 based on your rrs data
     Rrs_440 = Rrs[440].values
-
     bbp_s = 2.0 * (1 - 1.2 * np.exp(-0.9 * Rrs_440 / Rrs_555))
-    bbp = (443 / wave.reshape(-1, 1)) ** bbp_s 
+    bbp = (443 / wavelengths.reshape(-1, 1)) ** bbp_s 
 
+    # Put IOPs together: run for each spectrum
     IOPs = np.empty((n, 3))
 
     for i in range(n):  
@@ -288,14 +326,15 @@ def get_rrs_residuals(Rrs, temp, sal):
     A_ = A[:, np.newaxis]
     B_ = B[:, np.newaxis]
 
-    # Compute a and bb
+    # Reconstruct Rrs for each spectrum
     a = asw_ + (A_ * (IOPs[:, 0]**B_)) + (acdm.T * IOPs[:, 1])
     bb = bbsw + bbp * IOPs[:, 2]
+
+    rrsP = bb / (a + bb)
 
     # Gordon coefficients
     g1, g2 = 0.0949, 0.0794
 
-    rrsP = bb / (a + bb)
     modrrs = (g1 + g2 * rrsP) * rrsP
 
     # convert back to Rrs
