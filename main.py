@@ -9,7 +9,10 @@ def main():
     Define wavelengths corresponding to the Rrs spectra.
 
     Run Kramer_hyperRrs to get Rrs residuals.
-    Run Kramer_Rrs_pigments to run train the model.
+    Run Kramer_Rrs_pigments to train the model.
+
+    Running train_model will generate A and C coefficients. Make sure to create empty excel sheets to hold coeddicients before running.
+    See Kramer_Rrs_pigments.py for details. 
     '''
 
     data = pd.read_excel('HPLC_Rrs_forAli_2025.xlsx', header=0)
@@ -26,45 +29,43 @@ def main():
 
     # train model
     Kramer_Rrs_pigments.train_model(RrsD, hplc)
-
-def run_python_coefs():
+    
+def run_sdp(rrs,wl,sst,sss):
     '''
     Method to show how to apply coefficients to an Rrs spectra to generate pigment values.
 
-    Required inputs: A coefficients, C coefficients, Rrs residual
+    Required inputs: A coefficients, C coefficients (read from excel sheets), Rrs spectra, wavelengths, temperature, salinity
     
     pigment_concentration = sum(A(wavelength_i) * Rrs_residual(wavelength_i)) + C
     '''
+ 
+    sdp_names = ['Tchla','MVchlb','Chlc12']
 
-    a = pd.read_excel('python_a_coefs.xlsx', header=None)
-    c = pd.read_excel('python_c_coefs.xlsx', header=None)
-    drrs = pd.read_excel('dRrs_forAli_2025.xlsx')
+    rrs_residuals =  Kramer_hyperRrs.get_rrs_residuals(rrs, sst, sss, wl)[1]
+    rrs_residuals_d2 = np.diff(rrs_residuals, 2, axis=0).T
 
-    median_runs = np.zeros(len(drrs))
+    sdp = np.zeros((rrs_residuals_d2.shape[0],len(sdp_names)))
 
-    for i in range(len(drrs)):
-        # for each spectra 
+    for p, name in enumerate(sdp_names):
+        print(name)
 
-        spectra = drrs.iloc[i,:].values
+        a_coefs = pd.read_excel('sdp_coefs/python_a_coefs.xlsx', sheet_name=name).values  # shape: (n_wl, 100)
+        c_coefs = pd.read_excel('sdp_coefs/python_c_coefs.xlsx', sheet_name=name).values.flatten()  # shape: (100,)
 
-        all_runs = np.zeros(100)
+        # Matrix multiplication to compute all runs at once for all samples
+        # Result: run_vals_all shape (n_samples, 100)
+        run_vals_all = rrs_residuals_d2 @ a_coefs + c_coefs
 
-        for j in range(100):
-            # for each run (here there are 100 runs)
+        # Take median over runs axis (axis=1)
+        median_run = np.median(run_vals_all, axis=1)
 
-            a_run = a.iloc[:,j].values
-            c_run = c.iloc[j].values
+        # Enforce non-negative
+        median_run[median_run < 0] = 0
 
-            run = np.sum(a_run * spectra) + c_run
-            all_runs[j] = run
-        
-        # use the median of all runs as the pigment value
-        median_runs[i] = np.median(all_runs)
+        sdp[:, p] = median_run
 
-    # remove values below zero
-    median_runs[median_runs < 0] = 0
-    print(median_runs)
+    return pd.DataFrame(sdp, columns=['T chla', 'MV chlb', 'chl c1+c2'])
 
 if __name__ == "__main__":
     main()
-    #run_python_coefs()
+    #run_sdp()
