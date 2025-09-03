@@ -260,7 +260,7 @@ def get_rrs_residuals(Rrs, temp, sal, wavelengths):
     RrsD: pandas DataFrame (n_wavelengths, n_samples)
         above surface remote-sensing reflectance residual
     '''
-
+    
     n = len(temp) # number of samples/spectra
 
     # The model uses reflectance = f(IOPs) from Gordon et al. (1988) which uses
