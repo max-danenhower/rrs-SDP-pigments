@@ -38,10 +38,10 @@ def train_model(RrsD, hplc):
 
     summaries = []
 
-    # create empty excel sheets with names python_a_coefs.xlsx and pythoon_c_coefs.xlsx
+    # create empty excel sheets with names a_coefs.xlsx and c_coefs.xlsx
     # before running
-    with pd.ExcelWriter("python_a_coefs.xlsx", engine="openpyxl") as a_writer, \
-        pd.ExcelWriter("python_c_coefs.xlsx", engine="openpyxl") as c_writer:
+    with pd.ExcelWriter("a_coefs.xlsx", engine="openpyxl") as a_writer, \
+        pd.ExcelWriter("c_coefs.xlsx", engine="openpyxl") as c_writer:
     
         # Start modelling
         for i in range(len(pigs2mdl)):
