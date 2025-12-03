@@ -36,13 +36,14 @@ def train_model(RrsD, hplc):
     
     start = time.time()
 
+    # save summary statistics for each pigment model
     summaries = []
 
     # create empty excel sheets with names a_coefs.xlsx and c_coefs.xlsx
     # before running
     with pd.ExcelWriter("a_coefs.xlsx", engine="openpyxl") as a_writer, \
         pd.ExcelWriter("c_coefs.xlsx", engine="openpyxl") as c_writer:
-    
+
         # Start modelling
         for i in range(len(pigs2mdl)):
             pigment = pigs2mdl[i]
@@ -55,5 +56,6 @@ def train_model(RrsD, hplc):
             pd.DataFrame(coefficients).to_excel(a_writer, sheet_name=pigment, index=False)
             pd.DataFrame(intercepts).to_excel(c_writer, sheet_name=pigment, index=False)
 
+    print(summaries)
     print('Time taken:', time.time() - start)
 

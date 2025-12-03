@@ -22,10 +22,10 @@ def generate_coefficients():
 
     data = pd.read_excel('HPLC_Rrs_forAli_2025.xlsx', header=0)
 
-    sal = data.loc[:,'Sal'].values
-    temp = data.loc[:,'Temp'].values
-    Rrs = data.loc[:,'Rrs400':]
-    wavelegnths = np.arange(400,701)
+    sal = data.loc[:,'Sal'].values # array: (n_samples,)
+    temp = data.loc[:,'Temp'].values # array: (n_samples,)
+    Rrs = data.loc[:,'Rrs400':] # DataFrame: (n_samples, n_wavelengths) 
+    wavelegnths = np.arange(400,701) # array: (n_wavelengths,)
 
     # get Rrs residuals
     rrsD, RrsD = Kramer_hyperRrs.get_rrs_residuals(Rrs, temp, sal, wavelegnths)
