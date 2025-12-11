@@ -3,6 +3,9 @@ from typing import Tuple, Union
 import numpy as np
 from scipy.optimize import fmin
 import pandas as pd
+import sys
+import time
+import ray
 
 def RInw(
     lambda_: Union[int, float, np.ndarray],
@@ -12,6 +15,7 @@ def RInw(
     """Refractive index of air is from Ciddor (1996,Applied Optics)
     Refractive index of seawater is from Quan and Fry (1994, Applied Optics)
     """
+
     n_air = (
         1.0 + (5792105.0 / (238.0185 - 1 / (lambda_ / 1e3) ** 2)
         + 167917.0 / (57.362 - 1 / (lambda_ / 1e3) ** 2)) / 1e8
@@ -26,11 +30,14 @@ def RInw(
     n7 = -0.00423
     n8 = -4382
     n9 = 1.1455e6
+    
     nsw = (
         n0 + (n1 + n2 * Tc + n3 * Tc ** 2) * S + n4 * Tc ** 2 
         + (n5 + n6 * S + n7 * Tc) / lambda_ + n8 / lambda_ ** 2 + n9
         / lambda_ ** 3
     )
+    
+
     nsw = nsw * n_air
     dnswds = (n1 + n2 * Tc + n3 * Tc ** 2 + n6 / lambda_) * n_air
 
@@ -136,11 +143,6 @@ def betasw124_ZHH2009(lambda_, S, Tc, delta=0.039):
     MODIFIED on 05 Apr 2013 to use 124 degs instead of 117 degs
     """
 
-    # TODO: Support S and Tc as column vectors
-    for param in [S, Tc]:
-        if type(param) not in (int, float) or isinstance(param, np.ndarray):
-            raise NotImplementedError("S and Tc must be scalar.")
-
     # values of the constants
     Na = 6.0221417930e23  # Avogadro's constant
     Kbz = 1.3806503e-23  # Boltzmann constant
@@ -153,14 +155,14 @@ def betasw124_ZHH2009(lambda_, S, Tc, delta=0.039):
 
     # nsw: absolute refractive index of seawater
     # dnds: partial derivative of seawater refractive index w.r.t. salinity
-    nsw, dnds = RInw(lambda_, Tc, S)
+    nsw, dnds = RInw(lambda_, Tc, S) #shape (n,wavelengths),(n,wavelengths)
 
     # isothermal compressibility is from Lepple & Millero (1971,Deep Sea-Research), pages 10-11
     # The error ~ +/-0.004e-6 bar^-1
-    IsoComp = BetaT(Tc, S)
+    IsoComp = BetaT(Tc, S) # shape (n,1)
 
     # density of water and seawater,unit is Kg/m^3, from UNESCO,38,1981
-    density_sw = rho_sw(Tc, S)
+    density_sw = rho_sw(Tc, S) # shape (n,1)
 
     # water activity data of seawater is from Millero and Leung (1976,American
     # Journal of Science,276,1035-1077). Table 19 was reproduced using
@@ -170,7 +172,7 @@ def betasw124_ZHH2009(lambda_, S, Tc, delta=0.039):
     dlnawds = dlnasw_ds(Tc, S)
 
     # density derivative of refractive index from PMH model
-    DFRI = PMH(nsw)  # PMH model
+    DFRI = PMH(nsw)  # PMH model shape (n,wavelengths)
 
     # volume scattering at 90 degree due to the density fluctuation
     beta_df = (
@@ -189,16 +191,7 @@ def betasw124_ZHH2009(lambda_, S, Tc, delta=0.039):
     beta90sw = beta_df + beta_cf
     bsw = 8 * np.pi/3 * beta90sw * (2 + delta) / (1 + delta)
 
-    for i, value in enumerate(rad):  # TODO: Is there a better way to do this?
-        if np.rad2deg(value) >= 124:
-            rad124 = i
-            break
-    
-    betasw124 = (
-        beta90sw * (1 + ((np.cos(rad[rad124])) ** 2) * (1 - delta) / (1 + delta))
-    )
-
-    return betasw124, bsw, beta90sw, theta
+    return None, bsw, beta90sw, theta
 
 def gsm_cost(IOPs, rrs, aw, bbw, bbpstar, A, B, admstar):
     g = np.array([0.0949, 0.0794])  # Constants from Gordon et al., 1988
@@ -227,8 +220,8 @@ def gsm_invert(rrs, aw, bbw, bbpstar, A, B, admstar):
     iops_opt, _, _, _, _ = fmin(
         cost_fn,
         IOPSinit,
-        xtol=1e-9,
-        ftol=1e-9,
+        xtol=1e-6,
+        ftol=1e-6,
         maxfun=2000,
         maxiter=2000,
         full_output=True,
@@ -236,6 +229,22 @@ def gsm_invert(rrs, aw, bbw, bbpstar, A, B, admstar):
     )
 
     return iops_opt
+
+@ray.remote(num_cpus=1)
+def run_batch(rrs, asw, bbsw, bbp, A, B, acdm):
+    IOPs = []
+    for i in range(len(rrs)):
+        rrs_i = rrs[i, :]
+        asw_t = asw               
+        bbsw_i = bbsw[:, i]
+        bbp_i = bbp[:, i]
+        A_t = A
+        B_t = B
+        acdm_i = acdm[i, :]
+
+        iops_i = gsm_invert(rrs_i, asw_t, bbsw_i, bbp_i, A_t, B_t, acdm_i)
+        IOPs.append(iops_i)
+    return IOPs
 
 def get_rrs_residuals(Rrs, temp, sal, wavelengths):
     '''
@@ -261,8 +270,6 @@ def get_rrs_residuals(Rrs, temp, sal, wavelengths):
         above surface remote-sensing reflectance residual
     '''
     
-    n = len(temp) # number of samples/spectra
-
     # The model uses reflectance = f(IOPs) from Gordon et al. (1988) which uses
     # below the surface reflectance (rrs = Lu(0-)/Ed(0-)). If you are using 
     # above surface reflectance (Rrs = Lu(0+)/Ed(0+)), you will need to convert
@@ -272,45 +279,88 @@ def get_rrs_residuals(Rrs, temp, sal, wavelengths):
 
     # define total absorption as a sum of seawater absorption (asw), phytoplankton absorption (aph) 
     # and CDOM plus other detrital matter (acdm)
-    asw = pd.read_csv('aw_mcf16_350_700_1nm.csv', header=0)
-    asw = asw.iloc[50:,1].values # corresponds to wavelengths 
+    asw_chart = pd.read_csv('aw_mcf16_350_700_1nm.csv', header=0)
+    AB_coefs = pd.read_csv('aph_A_B_Coeffs_Sasha_RSE_paper.csv', header=0)
+
+    A = np.zeros(len(wavelengths)) 
+    B = np.zeros(len(wavelengths)) 
+    asw = np.zeros(len(wavelengths)) 
+
 
     # aph = import A & B coefficients from aph_A_B_Coeffs_Sasha_RSE_paper.csv
     # aph = A.*chl.^B; inversion model will solve for chl as an output
-    AB_coefs = pd.read_csv('aph_A_B_Coeffs_Sasha_RSE_paper.csv', header=0)
-    A = AB_coefs.iloc[50:,1].values
-    B = AB_coefs.iloc[50:,2].values
+    for i,w in enumerate(wavelengths): 
+        idx = np.argmin(np.abs(w-AB_coefs.iloc[:,0])) 
+        A[i] = float(AB_coefs.iloc[idx,1]) 
+        B[i] = float(AB_coefs.iloc[idx,2]) 
+        asw[i] = float(asw_chart.iloc[idx,1]) 
+
+    # get indices closest to wavelengths 
+    i490 = np.argmin(np.abs(wavelengths-490)) 
+    i555 = np.argmin(np.abs(wavelengths-555)) 
+    i440 = np.argmin(np.abs(wavelengths-440)) 
 
     # acdm slope is a function of Rrs (just above surface):
     # You will need to define Rrs490 and Rrs555 based on your Rrs data
-    Rrs_490 = Rrs[490].values
-    Rrs_555 = Rrs[555].values
+    Rrs_490 = Rrs.iloc[:,i490].values.astype(np.float64) 
+    Rrs_555 = Rrs.iloc[:,i555].values.astype(np.float64) 
 
     acdm_s = -(0.01447 + 0.00033 * Rrs_490 / Rrs_555)  
     acdm = np.exp(np.outer(acdm_s, wavelengths - 443))  # shape: (n_samples, n_wavelengths)
 
     # define backscattering as a sum of seawater backscattering (bbsw) and backscattering by particles (bbp)
     # bb_tot = bbsw + bbp
-    bsw = []
-
-    # bsw comes from Zhang et al. (2009)
-    for i in range(n):
-        _, bsw_i, _, _ = betasw124_ZHH2009(wavelengths, float(sal[i]), float(temp[i])) 
-        bsw.append(bsw_i)
+    temp_ = np.asarray(temp)[:,None]
+    sal_ = np.asarray(sal)[:,None]
+    lambda_ = np.asarray(wavelengths)[None,:]
+    
+    _,bsw,_,_ = betasw124_ZHH2009(lambda_, sal_, temp_)
 
     bsw = np.array(bsw)        
     bbsw = 0.5 * bsw.T         
 
     # bbp slope is a function of rrs (just below surface):
     # You will need to define rrs440 and rrs555 based on your rrs data
-    Rrs_440 = Rrs[440].values
+    Rrs_440 = Rrs.iloc[:,i440].values.astype(np.float64)
     bbp_s = 2.0 * (1 - 1.2 * np.exp(-0.9 * Rrs_440 / Rrs_555))
-    bbp = (443 / wavelengths.reshape(-1, 1)) ** bbp_s 
+    bbp = (443 / wavelengths.reshape(-1, 1)) ** bbp_s
 
-    # Put IOPs together: run for each spectrum
-    IOPs = np.empty((n, 3))
+    Rrs_np = rrs.values
 
-    for i in range(n):  
+    batch_size = min(10_000,int(len(temp)/32))
+
+    batches = [
+        (
+            Rrs_np[i:i+batch_size,:],
+            asw,
+            bbsw[:,i:i+batch_size],
+            bbp[:,i:i+batch_size],
+            A,B,
+            acdm[i:i+batch_size,:]
+        )
+        for i in range(0, len(Rrs_np), batch_size)
+    ]
+
+    # to run serially, comment out from here ...
+    ray.init(include_dashboard=True)
+
+    print('ray availble resources', ray.available_resources(),'\n')
+
+    # Launch Ray tasks. Run IOP inversion in parallel batches
+    futures = [run_batch.remote(*b) for b in batches]
+    results = ray.get(futures)  # list of lists, flatten if needed
+    IOPs = [res for batch in results for res in batch]
+    IOPs = np.array(IOPs)
+
+    ray.shutdown()
+    # ... to here
+
+    # Run IOPs inversion serially. Uncomment below. 
+
+    '''
+    IOPs = np.empty((len(temp_), 3))
+
+    for i in range(len(temp_)):
         rrs_i = rrs.iloc[i, :].values
         asw_t = asw               
         bbsw_i = bbsw[:, i]
@@ -319,8 +369,25 @@ def get_rrs_residuals(Rrs, temp, sal, wavelengths):
         B_t = B
         acdm_i = acdm[i, :]
 
+        if np.isnan(rrs_i).any():
+            print('rrs nan',i)
+        elif np.isnan(bbsw_i).any():
+            print('bbsw nan',i)
+        elif np.isnan(bbp_i).any():
+            print('bbp nan',i)
+        elif np.isnan(acdm_i).any():
+            print('acdm nan',i)
+        elif np.isnan(asw_t).any():
+            print('asw nan',i)
+        elif np.isnan(A_t).any():
+            print('A nan',i)
+        elif np.isnan(B_t).any():
+            print('B nan',i)
+    
         iops_i = gsm_invert(rrs_i, asw_t, bbsw_i, bbp_i, A_t, B_t, acdm_i)
         IOPs[i, :] = iops_i
+    '''
+
 
     asw_ = asw[:, np.newaxis]
     A_ = A[:, np.newaxis]

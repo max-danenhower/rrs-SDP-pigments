@@ -4,9 +4,12 @@ import pandas as pd
 import numpy as np
 import xarray as xr
 import matplotlib.pyplot as plt
+import cartopy
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
-from matplotlib.colors import ListedColormap, BoundaryNorm
+from matplotlib.colors import ListedColormap, BoundaryNorm, LogNorm
+import time
+from datetime import datetime
 
 def main():
     '''
@@ -44,21 +47,55 @@ def run_sdp(rrs,wl,sst,sss):
     pigment_concentration = sum(A(wavelength_i) * Rrs_residual(wavelength_i)) + C
     '''
  
-    sdp_names = ['Tchla','MVchlb','Chlc12']
+    sdp_names = [
+        'Tchla',
+        'MVchlb',
+        'Chlc12',
+        'Zea',
+        'DVchla',
+        'ButFuco',
+        'HexFuco',
+        'Allo',
+        'Neo',
+        'Viola',
+        'Fuco',
+        'Chlc3',
+        'Perid'
+    ]
 
-    rrs_residuals =  Kramer_hyperRrs.get_rrs_residuals(rrs, sst, sss, wl)[1]
+    res_start = time.time()
+
+    smoothed_rrs = (
+        rrs
+        .rolling(window=5, min_periods=1, axis=1)
+        .mean()
+    )
+
+    cutoff_rrs = smoothed_rrs.loc[:,400:700]
+
+    print('calculating residuals')
+    rrs_residuals =  Kramer_hyperRrs.get_rrs_residuals(cutoff_rrs, sst, sss, wl)[1]
+    res_end = time.time()
+    print('residuals calculated', res_end-res_start)
+
+    print('calculating 2nd derivative')
+    deriv_start = time.time()
     rrs_residuals_d2 = np.diff(rrs_residuals, 2, axis=0).T
-
-    print(rrs_residuals_d2)
-    print(rrs_residuals_d2.shape)
-
+    deriv_end = time.time()
+    print('2nd derivative calculated', deriv_end-deriv_start)
     sdp = np.zeros((rrs_residuals_d2.shape[0],len(sdp_names)))
 
+    np.save('rrs_residuals_d2.npy', rrs_residuals_d2)
+
+    print(rrs_residuals_d2.shape)
+
+    print('running coefs')
+    coef_start = time.time()
     for p, name in enumerate(sdp_names):
         print(name)
 
-        a_coefs = pd.read_excel('python_a_coefs.xlsx', sheet_name=name).values  # shape: (n_wl, 100)
-        c_coefs = pd.read_excel('python_c_coefs.xlsx', sheet_name=name).values.flatten()  # shape: (100,)
+        a_coefs = pd.read_excel('sdp_coefs/original_a_coefs.xlsx', sheet_name=name, header=None).values  # shape: (n_wl, 100)
+        c_coefs = pd.read_excel('sdp_coefs/original_c_coefs.xlsx', sheet_name=name, header=None).values.flatten()  # shape: (100,)
 
         # Matrix multiplication to compute all runs at once for all samples
         # Result: run_vals_all shape (n_samples, 100)
@@ -71,98 +108,137 @@ def run_sdp(rrs,wl,sst,sss):
         median_run[median_run < 0] = 0
 
         sdp[:, p] = median_run
+    coef_end = time.time()
+    print('coefs run complete', coef_end-coef_start)
+    print(sdp)
 
-    return pd.DataFrame(sdp, columns=['T chla', 'MV chlb', 'chl c1+c2'])
+    return pd.DataFrame(sdp, columns=sdp_names)
 
-def create_dataset(rrs_paths, sal_paths, temp_paths, bbox):
+def interpolate_coords(rrs_path, sal_path, temp_path):
     '''
-    Creates an xarray data array with latitude and longitude coordinates. Each coordinate contains a hyperspectral Rrs spectra with 
-    corresponding wavelenghts, salinity, and temperature. If more than one file for Rrs, salinity, or temperature are given, uses the 
-    date averaged values. 
+    Interpolate the salinity and temperature data coordinates onto the PACE L2 Rrs coordinates. Default use climatology files.
+    Can pass in GHRSST and SMAP files as well. 
 
     Parameters:
     -----------
-    rrs_paths : list or str
-        A single file path to a PACE Rrs file or a list of file paths to PACE Rrs files.
-    sal_paths : list or str
-        A single file path to a salinity file or a list of file paths to salinity files.
-    temp_paths : list or str
-        A single file path to a temperature file or a list of file paths to temperature files.
-    bbox : tuple of floats or ints
-        A tuple representing spatial bounds in the form (lower_left_lon, lower_left_lat, upper_right_lon, upper_right_lat).
+    L2_path : strclimatology\sst_climatology.nc
+        A single file path to a PACE L2 AOP file.
+    sal_path : str
+        A single file path to a salinity file.
+    temp_path : str
+        A single file path to a temperature file.
 
     Returns:
     --------
-    xarray.Dataset
-        A data array of Rrs values at each wavelength over a specified lat/lon box.
-
-    Raises:
-    -------
-    TypeError 
-        If rrs_paths, sal_paths, or temp_paths is not a string or list.
+    rrs_box, rrs_unc_box, wavelength_coords, sal, temp : Xarrays all on the same lat/lon coordinates (except wavelength_coords, which is a 1D array)
     '''
 
-    n = bbox[3]
-    s = bbox[1]
-    e = bbox[2]
-    w = bbox[0]
+    # define wavelengths
+    sensor_band_params = xr.open_dataset(rrs_path, group='sensor_band_parameters')
+    wavelength_coords = sensor_band_params.wavelength_3d.values
     
-    # creates a dataset of rrs values of the given file
-    if isinstance(rrs_paths, str):
-        rrs_data = xr.open_dataset(rrs_paths)
-        rrs = rrs_data["Rrs"].sel({"lat": slice(n, s), "lon": slice(w, e)})
-    elif isinstance(rrs_paths, list):
-        # if given a list of files, create a date averaged dataset of Rrs values 
-        rrs_data = xr.open_mfdataset(
-            rrs_paths,
-            combine="nested",
-            concat_dim="date",
-        )
-        rrs = rrs_data["Rrs"].sel({"lat": slice(n, s), "lon": slice(w, e)}).mean('date')
-        rrs = rrs.compute()
-    else:
-        raise ValueError('rrs_paths must be a string or a list containing at least one filepath')
-    
-    # creates a dataset of sal and temp values of the given file
-    if isinstance(sal_paths, str):
-        sal = xr.open_dataset(sal_paths)
-        sal = sal["smap_sss"].interp(longitude=rrs.lon, latitude=rrs.lat, method='nearest')
-    elif isinstance(sal_paths, list):
-        # if given a list of files, create a date averaged dataset of salinity values 
-        sal = xr.open_mfdataset(
-            sal_paths,
-            combine="nested",
-            concat_dim="date",
-        )
-        sal = sal["smap_sss"].interp(longitude=rrs.lon, latitude=rrs.lat, method='nearest').mean('date')
-        sal = sal.compute()
-    else:
-        raise TypeError('temp_paths must be a string or list')
-    
-    # creates a dataset of sal and temp values of the given file
-    if isinstance(temp_paths, str):
-        temp = xr.open_dataset(temp_paths)
-        temp = temp['analysed_sst'].squeeze() # get rid of extra time dimension
-        temp = temp.interp(lon=rrs.lon, lat=rrs.lat, method='nearest')
-    elif isinstance(temp_paths, list):
-        # if given a list of files, create a date averaged dataset of temperature values 
-        temp = xr.open_mfdataset(
-            temp_paths,
-            combine="nested",
-            concat_dim="time"
-        )
-        temp = temp['analysed_sst'].interp(lon=rrs.lon, lat=rrs.lat, method='nearest').mean('time')
-        temp = temp.compute()
-    else:
-        raise TypeError('temp_paths must be a string or list')
-    
-    rrs = rrs.interp(wavelength=np.arange(400,701,1))
+    dataset = xr.open_dataset(rrs_path, group='geophysical_data')
+    rrs = dataset['Rrs']
 
-    return rrs, sal, temp
+    # Add latitude and longitude coordinates to the Rrs and Rrs uncertainty datasets
+    dataset = xr.open_dataset(rrs_path, group="navigation_data")
+    dataset = dataset.set_coords(("longitude", "latitude"))
+    dataset_r = xr.merge((rrs, dataset.coords))
+    dataset_r = dataset_r.assign_coords(
+        wavelength_3d = wavelength_coords
+    )
 
-def plot_pigments(data, lower_bound, upper_bound, label):
+    n_bound = dataset_r.latitude.values.max()
+    s_bound = dataset_r.latitude.values.min() 
+    e_bound = dataset_r.longitude.values.max()
+    w_bound = dataset_r.longitude.values.min()
+
+    print('north',n_bound,'south',s_bound,'east',e_bound,'west',w_bound)
+
+    rrs_box = dataset_r["Rrs"].where(
+        (
+            (dataset["latitude"] > s_bound) # southern boundary latitude
+            & (dataset["latitude"] < n_bound) # northern boundary latitude
+            & (dataset["longitude"] < e_bound) # eastern boundary latitude
+            & (dataset["longitude"] > w_bound) # western boundary latitude
+        ),
+        drop=True,
+    )
+
+    with xr.open_dataset(rrs_path) as ds:
+        time_coverage_start = ds.attrs['time_coverage_start']
+        month = datetime.strptime(time_coverage_start,'%Y-%m-%dT%H:%M:%S.%fZ').month
+    month = str(month)
+
+    sss_key = 'sss' + month
+    sst_key = 'data' + month
+
+    with xr.open_dataset(sal_path) as ds:
+        if 'smap_sss' in ds.variables:
+            # use SMAP salinity
+            sal = xr.open_dataset(sal_path)['smap_sss']
+            sal = sal.interp(longitude=rrs_box.longitude, latitude=rrs_box.latitude, method='nearest')
+        elif sss_key in ds.variables:
+            # use climatology
+            sal = xr.open_dataset(sal_path)
+            sal[sss_key] = sal[sss_key].assign_coords({
+                'Number of Latitudes': sal['Latitude'],
+                'Number of Longitudes': sal['Longitude']
+            })
+
+            sal = sal.rename({
+                'Number of Latitudes': 'lat',
+                'Number of Longitudes': 'lon'
+            })
+
+            # re-align longitude coords to -180 to 180 
+            sal = sal.assign_coords({
+                "lon": (((sal.lon + 180) % 360) - 180)
+            })
+
+            sal = sal.sortby('lon')
+            sal = sal[sss_key]
+            sal = sal.interp(lon=rrs_box.longitude, lat=rrs_box.latitude, method='nearest')
+
+    with xr.open_dataset(temp_path) as ds:
+        if 'analysed_sst' in ds.variables:
+            temp = xr.open_dataset(temp_path)['analysed_sst']
+            temp = temp.interp(lon=rrs_box.longitude, lat=rrs_box.latitude, method='nearest').squeeze()
+            temp = temp - 273.15
+        elif sst_key in ds:
+            # use climatology
+            temp = xr.open_dataset(temp_path)
+            temp_lat_dim = 2 * (int(month)-1)
+            temp_lon_dim = temp_lat_dim + 1
+
+            if month == '12':
+                dim1 = 'Latitude'
+                dim2 = 'Longitude'
+            else:
+                dim1 = 'fakeDim' + str(temp_lat_dim)
+                dim2 = 'fakeDim' + str(temp_lon_dim)
+            temp = temp.rename({dim1: 'Latitude', dim2: 'Longitude'})
+
+            temp = temp[sst_key]
+            temp = temp.interp(Longitude=rrs_box.longitude, Latitude=rrs_box.latitude, method='nearest')
+            temp = temp.slope * temp + temp.intercept
+
+
+    rrs_flat = rrs_box.stack(pixel=("number_of_lines", "pixels_per_line"))
+    rrs_flat = rrs_flat.transpose("pixel", "wavelength_3d")
+    rrs_flat = rrs_flat.interp(wavelength_3d=np.arange(346,720))
+
+    rrs_np = rrs_flat.to_numpy().reshape(-1, rrs_flat.wavelength_3d.size)
+    rrs_df = pd.DataFrame(rrs_np, columns=np.arange(346,720,1))
+
+    sal_np = sal.to_numpy().flatten()
+    temp_np = temp.to_numpy().flatten()
+
+    return rrs_df, sal_np, temp_np
+
+def plot_pigments(data, lower_bound, upper_bound, title):
     '''
-    Plots the pigment data from an L3 file with lat/lon coordinates using a color map
+    Plots the pigment data from an L2 file with lat/lon coordinates using a color map
 
     Paramaters:
     -----------
@@ -172,59 +248,105 @@ def plot_pigments(data, lower_bound, upper_bound, label):
         The lowest value represented on the color scale.
     upper_bound : float
         The upper value represented on the color scale.
-    label : string
-        A label for the graph.
     '''
-
-    data.attrs["long_name"] = label
-
-    cmap = plt.get_cmap("viridis")
-    colors = cmap(np.linspace(0, 1, cmap.N))
-    colors = np.vstack((np.array([1, 1, 1, 1]), colors)) 
-    custom_cmap = ListedColormap(colors)
-    norm = BoundaryNorm(list(np.linspace(lower_bound, upper_bound, cmap.N)), ncolors=custom_cmap.N) 
-
-    plt.figure()
-    ax = plt.axes(projection=ccrs.PlateCarree())
-    ax.coastlines()
-    ax.gridlines(draw_labels={"left": "y", "bottom": "x"})
-    data.plot(cmap=custom_cmap, ax=ax, norm=norm)
-    ax.add_feature(cfeature.LAND, facecolor='white', zorder=1)
+    ax = plt.axes(projection=cartopy.crs.PlateCarree())
+    ax.gridlines(draw_labels={'bottom':'x','left':'y'})
+    ax.add_feature(cartopy.feature.COASTLINE, linewidth=0.5)
+    data.plot(
+        x='longitude',
+        y='latitude',
+        vmin=lower_bound,
+        vmax=upper_bound,
+        ax=ax
+    )
     plt.show()
 
-def sdp_from_pace(pace_file, sss, sst):
+def sdp_from_pace(pace_file, output_str, sss_file='climatology\sss_climatology_woa2009.nc', sst_file='climatology\sst_climatology.nc'):
 
-    rrs_interp, sss_interp, sst_interp = create_dataset(pace_file, sss, sst, (-166, -26, -165, -25))
+    print('generating pigments from PACE')
 
-    print(rrs_interp)
+    interp_start = time.time()
+    print('starting interpolation')
+
+    rrs_interp, sss_interp, sst_interp = interpolate_coords(pace_file, sss_file, sst_file)
+    interp_end = time.time()
+    print('interpolation complete:', interp_end - interp_start)
+
+    print('rrs_interp shape:', rrs_interp.shape)
     wl = np.arange(400,701,1)
 
-    rrs_np = rrs_interp.to_numpy().reshape(-1, rrs_interp.wavelength.size)
-    rrs_df = pd.DataFrame(rrs_np, columns=wl)
-    sss_np = sss_interp.to_numpy().flatten()
-    sst_np = sst_interp.to_numpy().flatten()
+    rrs_cutoff = rrs_interp.loc[:,400:700]
 
-    sdp = run_sdp(rrs_df, wl, sst_np, sss_np)
+    # remove nan values
+    nanmask = np.isnan(rrs_cutoff.iloc[:,0].values) | np.isnan(sss_interp) | np.isnan(sst_interp)
+    rrs_cutoff = rrs_cutoff[~nanmask]
+    sss_interp = sss_interp[~nanmask]
+    sst_interp = sst_interp[~nanmask]
 
-    chla = sdp['T chla'].values.reshape(rrs_interp.lat.size, rrs_interp.lon.size)
-    chlb = sdp['MV chlb'].values.reshape(rrs_interp.lat.size, rrs_interp.lon.size)
-    chlc = sdp['chl c1+c2'].values.reshape(rrs_interp.lat.size, rrs_interp.lon.size)
+    print(sst_interp.shape, sss_interp.shape, rrs_cutoff.shape)
+    print(np.isnan(rrs_cutoff.iloc[:,0]).sum())
 
+    sdp = run_sdp(rrs_cutoff, wl, sst_interp, sss_interp)
+
+    print('sdp calculation complete')
+
+    # put nan values back in (for mapping later)
+    full_sdp = pd.DataFrame(np.nan, index=np.arange(nanmask.shape[0]), columns=sdp.columns)
+    full_sdp.loc[~nanmask, :] = sdp.values
+    sdp = full_sdp
+
+    # add lat/lon coords
+    nav_data = xr.open_dataset(pace_file, group="navigation_data")
+    nav_data = nav_data.set_coords(("longitude", "latitude"))
+    number_of_lines = int(nav_data.latitude.number_of_lines.shape[0])
+    pixels_per_line = int(nav_data.latitude.pixels_per_line.shape[0])
+
+    chla = sdp['Tchla'].values.reshape(number_of_lines, pixels_per_line)
+    chlb = sdp['MVchlb'].values.reshape(number_of_lines, pixels_per_line)
+    chlc12 = sdp['Chlc12'].values.reshape(number_of_lines, pixels_per_line)
+    zea = sdp['Zea'].values.reshape(number_of_lines, pixels_per_line)
+    dvchla = sdp['DVchla'].values.reshape(number_of_lines, pixels_per_line)
+    butfuco = sdp['ButFuco'].values.reshape(number_of_lines, pixels_per_line)
+    hexfuco = sdp['HexFuco'].values.reshape(number_of_lines, pixels_per_line)
+    allo = sdp['Allo'].values.reshape(number_of_lines, pixels_per_line)
+    neo = sdp['Neo'].values.reshape(number_of_lines, pixels_per_line)
+    viola = sdp['Viola'].values.reshape(number_of_lines, pixels_per_line)
+    fuco = sdp['Fuco'].values.reshape(number_of_lines, pixels_per_line)
+    chlc3 = sdp['Chlc3'].values.reshape(number_of_lines, pixels_per_line)
+    perid = sdp['Perid'].values.reshape(number_of_lines, pixels_per_line)
+    
     pigments = xr.Dataset(
         {
-            'chla': (['lat', 'lon'], chla),
-            'chlb': (['lat', 'lon'], chlb),
-            'chlc': (['lat', 'lon'], chlc),
+            'chla': (['number_of_lines', 'pixels_per_line'], chla),
+            'chlb': (['number_of_lines', 'pixels_per_line'], chlb),
+            'chlc': (['number_of_lines', 'pixels_per_line'], chlc12),
+            'zea': (['number_of_lines', 'pixels_per_line'], zea),
+            'dvchla':  (['number_of_lines', 'pixels_per_line'], dvchla),
+            'butfuco':  (['number_of_lines', 'pixels_per_line'], butfuco),
+            'hexfuco':  (['number_of_lines', 'pixels_per_line'], hexfuco),
+            'allo':  (['number_of_lines', 'pixels_per_line'], allo),
+            'neo':  (['number_of_lines', 'pixels_per_line'], neo),
+            'viola':  (['number_of_lines', 'pixels_per_line'], viola),
+            'fuco': (['number_of_lines', 'pixels_per_line'], fuco),
+            'chlc3':  (['number_of_lines', 'pixels_per_line'], chlc3),
+            'perid':  (['number_of_lines', 'pixels_per_line'], perid),
         },
         coords={
-            'lat': rrs_interp.lat.values,
-            'lon': rrs_interp.lon.values,
+            'number_of_lines': np.arange(number_of_lines),
+            'pixels_per_line': np.arange(pixels_per_line),
         },
     )
+
+    # add lat/lon coords
+    pigments = xr.merge((pigments, nav_data.coords))
+
+    results_str = 'sdp_pigments-' + output_str
+
+    pigments.to_netcdf(results_str)
     
 if __name__ == "__main__":
-    pace_file = 'pace_files/PACE_OCI.20240612.L3m.DAY.RRS.V3_0.Rrs.4km.nc'
-    sss = 'pace_files/SMAP_L3_SSS_20240608_8DAYS_V5.0.nc'
-    sst = 'pace_files/20240612090000-JPL-L4_GHRSST-SSTfnd-MUR-GLOB-v02.0-fv04.1.nc'
 
-    sdp_from_pace(pace_file, sss, sst)
+    pace = 'PACE_OCI.20251006T091808.L2.OC_AOP.V3_1.NRT.nc'
+    sdp_from_pace(pace, output_str='test_clim')
+
+
