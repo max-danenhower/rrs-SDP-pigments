@@ -105,10 +105,14 @@ def run_sdp(rrs,wl,sst,sss):
     coef_start = time.time()
     for p, name in enumerate(sdp_names):
 
+
+        # Read in A and C coefficients
+        # a_coefs shape: (n_wl, 100), c_coefs shape: (100,)
+        # A and C coefficients need to be pre-computed and stored in excel sheets
         a_coefs = pd.read_excel('sdp_coefs/original_a_coefs.xlsx', sheet_name=name, header=None).values  # shape: (n_wl, 100)
         c_coefs = pd.read_excel('sdp_coefs/original_c_coefs.xlsx', sheet_name=name, header=None).values.flatten()  # shape: (100,)
 
-        # Matrix multiplication to compute all runs at once for all samples
+        # Matrix multiplication to compute all runs for all samples
         # Result: run_vals_all shape (n_samples, 100)
         run_vals_all = rrs_residuals_d2 @ a_coefs + c_coefs
 
@@ -121,7 +125,6 @@ def run_sdp(rrs,wl,sst,sss):
         sdp[:, p] = median_run
     coef_end = time.time()
     print('coefs run complete', coef_end-coef_start)
-    print(sdp)
 
     return pd.DataFrame(sdp, columns=sdp_names)
 
@@ -273,6 +276,14 @@ def plot_pigments(data, lower_bound, upper_bound, title):
     plt.show()
 
 def sdp_from_pace(pace_file, output_str, sss_file='climatology\sss_climatology_woa2009.nc', sst_file='climatology\sst_climatology.nc'):
+    '''
+    Apply SDP to PACE L2 Rrs data to generate pigment concentrations. Saves the results as a netCDF file.
+    
+    :param pace_file: File path to PACE L2 AOP data. 
+    :param output_str: file name string to save results as.
+    :param sss_file: SMAP or climatology salinity file path.
+    :param sst_file: GHRSST or climatology temperature file path.
+    '''
 
     print('generating pigments from PACE')
 
