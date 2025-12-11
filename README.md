@@ -1,7 +1,7 @@
 # rrs-SDP-pigments
 Translating Kramer Rrs SDP method from MATLAB to python. Original GitHub can be found at https://github.com/sashajane19/Rrs_pigments
 
-Run main.py to generate SDP coefficients. main.py requires Rrs spectra, temperature, and salinity. Coefficients are saved to an excel sheet. 
+Run generate_coefficients in main.py to generate SDP coefficients. Coefficients are saved to an excel sheet. Rrs and coincident SSS and SST are required to generate coefficients. Once coefficients are generated, run run_sdp() in main.py to apply coefficients.
 
 Papers where methods were used:
 

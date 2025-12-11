@@ -11,7 +11,7 @@ from matplotlib.colors import ListedColormap, BoundaryNorm, LogNorm
 import time
 from datetime import datetime
 
-def main():
+def generate_coefficients():
     '''
     Read in Rrs, temperature, and salinity data. 
     Define wavelengths corresponding to the Rrs spectra.
@@ -19,32 +19,44 @@ def main():
     Run Kramer_hyperRrs to get Rrs residuals.
     Run Kramer_Rrs_pigments to train the model.
 
-    Running train_model will generate A and C coefficients. Make sure to create empty excel sheets to hold coeddicients before running.
+    Running train_model will generate A and C coefficients. Make sure to create empty excel sheets to hold coefficients before running.
     See Kramer_Rrs_pigments.py for details. 
     '''
 
     data = pd.read_excel('HPLC_Rrs_forAli_2025.xlsx', header=0)
 
-    sal = data.loc[:,'Sal'].values
-    temp = data.loc[:,'Temp'].values
-    Rrs = data.loc[:,'Rrs400':]
-    wavelegnths = np.arange(400,701)
+    sal = data.loc[:,'Sal'].values # array: (n_samples,)
+    temp = data.loc[:,'Temp'].values # array: (n_samples,)
+    Rrs = data.loc[:,'Rrs400':] # DataFrame: (n_samples, n_wavelengths) 
+    wavelegnths = np.arange(400,701) # array: (n_wavelengths,)
 
     # get Rrs residuals
     rrsD, RrsD = Kramer_hyperRrs.get_rrs_residuals(Rrs, temp, sal, wavelegnths)
 
     hplc = data.loc[:,'Tchla':'Pras'].values
 
-    # train model
+    # train model, create a spreadsheet with coefficients
     Kramer_Rrs_pigments.train_model(RrsD, hplc)
     
 def run_sdp(rrs,wl,sst,sss):
     '''
     Method to show how to apply coefficients to an Rrs spectra to generate pigment values.
-
-    Required inputs: A coefficients, C coefficients (read from excel sheets), Rrs spectra, wavelengths, temperature, salinity
     
     pigment_concentration = sum(A(wavelength_i) * Rrs_residual(wavelength_i)) + C
+
+    Coefficients are read from excel sheets created during the training process.
+
+    Parameters:
+    -----------
+
+    rrs : DataFrame(n_samples, n_wavelengths)
+        DataFrame where each row is an Rrs spectra with columns as wavelengths.
+    wl : array-like(n_wavelengths)
+        Wavelengths corresponding to the Rrs spectra columns.
+    sst : array-like(n_samples)
+        Sea surface temperature values corresponding to each Rrs spectra.
+    sss : array-like(n_samples)
+        Sea surface salinity values corresponding to each Rrs spectra.
     '''
  
     sdp_names = [
@@ -92,7 +104,6 @@ def run_sdp(rrs,wl,sst,sss):
     print('running coefs')
     coef_start = time.time()
     for p, name in enumerate(sdp_names):
-        print(name)
 
         a_coefs = pd.read_excel('sdp_coefs/original_a_coefs.xlsx', sheet_name=name, header=None).values  # shape: (n_wl, 100)
         c_coefs = pd.read_excel('sdp_coefs/original_c_coefs.xlsx', sheet_name=name, header=None).values.flatten()  # shape: (100,)
