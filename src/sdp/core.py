@@ -156,25 +156,11 @@ def interpolate_coords(rrs_path, sal_path, temp_path, bbox):
     rrs_box, rrs_unc_box, wavelength_coords, sal, temp : Xarrays all on the same lat/lon coordinates (except wavelength_coords, which is a 1D array)
     '''
 
-    # Open PACE groups
-    sensor_band_params = xr.open_dataset(rrs_path, group="sensor_band_parameters")
-    geophysical_data = xr.open_dataset(rrs_path, group="geophysical_data")
-    navigation_data = xr.open_dataset(rrs_path, group="navigation_data")
-    
-    # Extract wavelength coordinates
-    wavelength = sensor_band_params["wavelength_3d"].values
-    
-    # Get Rrs and attach coordinates
-    navigation_data = navigation_data.set_coords(("latitude", "longitude"))
-    
-    rrs = (
-        geophysical_data["Rrs"]
-        .assign_coords(
-            latitude=navigation_data.latitude,
-            longitude=navigation_data.longitude,
-            wavelength=wavelength,
-        )
-    )
+    # Open PACE data
+    datatree = xr.open_datatree(rrs_path)
+    rrs = datatree["geophysical_data"]["Rrs"]
+    for variable in ("longitude", "latitude"):
+        rrs[variable] = datatree["navigation_data"][variable]
     
     if bbox is not None:
         w,s,e,n = bbox[0],bbox[1],bbox[2],bbox[3]
