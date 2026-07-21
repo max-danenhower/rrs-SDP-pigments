@@ -1,11 +1,12 @@
+from importlib.resources import files
 from typing import Tuple, Union
 
 import numpy as np
-from scipy.optimize import fmin
 import pandas as pd
-import sys
-import time
-import ray
+from scipy.optimize import fmin
+
+ASSETS = files().joinpath('resources')
+
 
 def RInw(
     lambda_: Union[int, float, np.ndarray],
@@ -230,21 +231,28 @@ def gsm_invert(rrs, aw, bbw, bbpstar, A, B, admstar):
 
     return iops_opt
 
-@ray.remote(num_cpus=1)
-def run_batch(rrs, asw, bbsw, bbp, A, B, acdm):
-    IOPs = []
-    for i in range(len(rrs)):
-        rrs_i = rrs[i, :]
-        asw_t = asw               
-        bbsw_i = bbsw[:, i]
-        bbp_i = bbp[:, i]
-        A_t = A
-        B_t = B
-        acdm_i = acdm[i, :]
 
-        iops_i = gsm_invert(rrs_i, asw_t, bbsw_i, bbp_i, A_t, B_t, acdm_i)
-        IOPs.append(iops_i)
-    return IOPs
+try:
+    import ray
+except ModuleNotFoundError:
+    pass
+else:
+    @ray.remote(num_cpus=1)
+    def run_batch(rrs, asw, bbsw, bbp, A, B, acdm):
+        IOPs = []
+        for i in range(len(rrs)):
+            rrs_i = rrs[i, :]
+            asw_t = asw               
+            bbsw_i = bbsw[:, i]
+            bbp_i = bbp[:, i]
+            A_t = A
+            B_t = B
+            acdm_i = acdm[i, :]
+
+            iops_i = gsm_invert(rrs_i, asw_t, bbsw_i, bbp_i, A_t, B_t, acdm_i)
+            IOPs.append(iops_i)
+        return IOPs
+
 
 def get_rrs_residuals(Rrs, temp, sal, wavelengths):
     '''
@@ -279,8 +287,8 @@ def get_rrs_residuals(Rrs, temp, sal, wavelengths):
 
     # define total absorption as a sum of seawater absorption (asw), phytoplankton absorption (aph) 
     # and CDOM plus other detrital matter (acdm)
-    asw_chart = pd.read_csv('aw_mcf16_350_700_1nm.csv', header=0)
-    AB_coefs = pd.read_csv('aph_A_B_Coeffs_Sasha_RSE_paper.csv', header=0)
+    asw_chart = pd.read_csv(ASSETS / 'aw_mcf16_350_700_1nm.csv', header=0)
+    AB_coefs = pd.read_csv(ASSETS / 'aph_A_B_Coeffs_Sasha_RSE_paper.csv', header=0)
 
     A = np.zeros(len(wavelengths)) 
     B = np.zeros(len(wavelengths)) 
@@ -341,53 +349,50 @@ def get_rrs_residuals(Rrs, temp, sal, wavelengths):
         for i in range(0, len(Rrs_np), batch_size)
     ]
 
-    # to run serially, comment out from here ...
-    ray.init(include_dashboard=True)
+    try:
+        import ray
+    except ModuleNotFoundError:
+        # Run IOPs inversion serially
 
-    print('ray availble resources', ray.available_resources(),'\n')
+        IOPs = np.empty((len(temp_), 3))
+        for i in range(len(temp_)):
+            rrs_i = rrs.iloc[i, :].values
+            asw_t = asw               
+            bbsw_i = bbsw[:, i]
+            bbp_i = bbp[:, i]
+            A_t = A
+            B_t = B
+            acdm_i = acdm[i, :]
 
-    # Launch Ray tasks. Run IOP inversion in parallel batches
-    futures = [run_batch.remote(*b) for b in batches]
-    results = ray.get(futures)  # list of lists, flatten if needed
-    IOPs = [res for batch in results for res in batch]
-    IOPs = np.array(IOPs)
+            if np.isnan(rrs_i).any():
+                print('rrs nan',i)
+            elif np.isnan(bbsw_i).any():
+                print('bbsw nan',i)
+            elif np.isnan(bbp_i).any():
+                print('bbp nan',i)
+            elif np.isnan(acdm_i).any():
+                print('acdm nan',i)
+            elif np.isnan(asw_t).any():
+                print('asw nan',i)
+            elif np.isnan(A_t).any():
+                print('A nan',i)
+            elif np.isnan(B_t).any():
+                print('B nan',i)
+        
+            iops_i = gsm_invert(rrs_i, asw_t, bbsw_i, bbp_i, A_t, B_t, acdm_i)
+            IOPs[i, :] = iops_i
+    else:
+        ray.init(include_dashboard=False)
 
-    ray.shutdown()
-    # ... to here
+        print('ray availble resources', ray.available_resources(),'\n')
 
-    # Run IOPs inversion serially. Uncomment below. 
+        # Launch Ray tasks. Run IOP inversion in parallel batches
+        futures = [run_batch.remote(*b) for b in batches]
+        results = ray.get(futures)  # list of lists, flatten if needed
+        IOPs = [res for batch in results for res in batch]
+        IOPs = np.array(IOPs)
 
-    '''
-    IOPs = np.empty((len(temp_), 3))
-
-    for i in range(len(temp_)):
-        rrs_i = rrs.iloc[i, :].values
-        asw_t = asw               
-        bbsw_i = bbsw[:, i]
-        bbp_i = bbp[:, i]
-        A_t = A
-        B_t = B
-        acdm_i = acdm[i, :]
-
-        if np.isnan(rrs_i).any():
-            print('rrs nan',i)
-        elif np.isnan(bbsw_i).any():
-            print('bbsw nan',i)
-        elif np.isnan(bbp_i).any():
-            print('bbp nan',i)
-        elif np.isnan(acdm_i).any():
-            print('acdm nan',i)
-        elif np.isnan(asw_t).any():
-            print('asw nan',i)
-        elif np.isnan(A_t).any():
-            print('A nan',i)
-        elif np.isnan(B_t).any():
-            print('B nan',i)
-    
-        iops_i = gsm_invert(rrs_i, asw_t, bbsw_i, bbp_i, A_t, B_t, acdm_i)
-        IOPs[i, :] = iops_i
-    '''
-
+        ray.shutdown()
 
     asw_ = asw[:, np.newaxis]
     A_ = A[:, np.newaxis]

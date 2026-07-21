@@ -1,0 +1,40 @@
+[project]
+name = "sdp"
+dynamic = ["version"]
+description = "Spectral derivative inversion method to estimate phytoplankton pigment concentrations from PACE OCI remote sensing reflectance. Algorithm is called 'SDP'."
+readme = "README.md"
+authors = [
+    { name = "Max Danenhower"},
+    { name = "Sasha Kramer"}
+]
+requires-python = ">=3.12"
+dependencies = [
+    "cartopy>=0.24.1",
+    "h5netcdf[h5py]>=1.6.1",
+    "matplotlib>=3.10.3",
+    "numpy>=2.2.5",
+    "pandas[excel]>=2.2.3",
+    "scipy>=1.15.3",
+    "scikit-learn>=1.9.0",
+    "xarray>=2025.4.0"
+]
+
+[project.optional-dependencies]
+ray = [
+    "ray[default]>=2.55.1",
+]
+
+[dependency-groups]
+examples = [
+    "ipywidgets>=8.1.8",
+    "ipykernel>=7.3.0",
+    "earthaccess>=0.18.0",    
+]
+
+[tool.hatch.version]
+source = "vcs"
+tag-pattern = "SDP\\.v(.*)"
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"

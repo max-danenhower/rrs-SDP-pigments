@@ -1,7 +1,10 @@
+from time import perf_counter
+
 import numpy as np
-from rrsModelTrain import rrsModelTrain
 import pandas as pd
-import time
+
+from .rrsModelTrain import rrsModelTrain
+
 
 def train_model(RrsD, hplc):
     '''
@@ -34,7 +37,7 @@ def train_model(RrsD, hplc):
              'Fuco','Perid','Zea','MVchla','DVchla','Chllide','MVchlb','DVchlb','Chlc12','Chlc3',
              'Lut','Neo','Viola','Phytin','Phide','Pras'])
     
-    start = time.time()
+    start = perf_counter()
 
     # save summary statistics for each pigment model
     summaries = []
@@ -57,5 +60,5 @@ def train_model(RrsD, hplc):
             pd.DataFrame(intercepts).to_excel(c_writer, sheet_name=pigment, index=False)
 
     print(summaries)
-    print('Time taken:', time.time() - start)
+    print('Time taken:', perf_counter() - start)
 
