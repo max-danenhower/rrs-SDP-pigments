@@ -382,7 +382,7 @@ def get_rrs_residuals(Rrs, temp, sal, wavelengths):
             iops_i = gsm_invert(rrs_i, asw_t, bbsw_i, bbp_i, A_t, B_t, acdm_i)
             IOPs[i, :] = iops_i
     else:
-        ray.init(include_dashboard=False)
+        ray.init(include_dashboard=False, logging_level="error")
 
         print('ray availble resources', ray.available_resources(),'\n')
 
