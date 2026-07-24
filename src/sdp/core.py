@@ -396,8 +396,8 @@ def sdp_from_pace(pace_file, output_str, sss_file=None, sst_file=None, bbox=None
     
     pigments = xr.Dataset(
         {
-            'tchla': (['number_of_lines', 'pixels_per_line'], chla),
-            'mvchlb': (['number_of_lines', 'pixels_per_line'], chlb),
+            'tchla': (['number_of_lines', 'pixels_per_line'], tchla),
+            'mvchlb': (['number_of_lines', 'pixels_per_line'], mvchlb),
             'chlc12': (['number_of_lines', 'pixels_per_line'], chlc12),
             'zea': (['number_of_lines', 'pixels_per_line'], zea),
             'dvchla':  (['number_of_lines', 'pixels_per_line'], dvchla),
