@@ -380,8 +380,8 @@ def sdp_from_pace(pace_file, output_str, sss_file=None, sst_file=None, bbox=None
     number_of_lines = int(nav_box.latitude.number_of_lines.shape[0])
     pixels_per_line = int(nav_box.latitude.pixels_per_line.shape[0])
     
-    chla = sdp['Tchla'].values.reshape(number_of_lines, pixels_per_line)
-    chlb = sdp['MVchlb'].values.reshape(number_of_lines, pixels_per_line)
+    tchla = sdp['Tchla'].values.reshape(number_of_lines, pixels_per_line)
+    mvchlb = sdp['MVchlb'].values.reshape(number_of_lines, pixels_per_line)
     chlc12 = sdp['Chlc12'].values.reshape(number_of_lines, pixels_per_line)
     zea = sdp['Zea'].values.reshape(number_of_lines, pixels_per_line)
     dvchla = sdp['DVchla'].values.reshape(number_of_lines, pixels_per_line)
@@ -396,9 +396,9 @@ def sdp_from_pace(pace_file, output_str, sss_file=None, sst_file=None, bbox=None
     
     pigments = xr.Dataset(
         {
-            'chla': (['number_of_lines', 'pixels_per_line'], chla),
-            'chlb': (['number_of_lines', 'pixels_per_line'], chlb),
-            'chlc': (['number_of_lines', 'pixels_per_line'], chlc12),
+            'tchla': (['number_of_lines', 'pixels_per_line'], chla),
+            'mvchlb': (['number_of_lines', 'pixels_per_line'], chlb),
+            'chlc12': (['number_of_lines', 'pixels_per_line'], chlc12),
             'zea': (['number_of_lines', 'pixels_per_line'], zea),
             'dvchla':  (['number_of_lines', 'pixels_per_line'], dvchla),
             'butfuco':  (['number_of_lines', 'pixels_per_line'], butfuco),
