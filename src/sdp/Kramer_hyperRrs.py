@@ -329,8 +329,9 @@ def get_rrs_residuals(Rrs, temp, sal, wavelengths):
 
     # bbp slope is a function of rrs (just below surface):
     # You will need to define rrs440 and rrs555 based on your rrs data
-    Rrs_440 = Rrs.iloc[:,i440].values.astype(np.float64)
-    bbp_s = 2.0 * (1 - 1.2 * np.exp(-0.9 * Rrs_440 / Rrs_555))
+    rrs_440 = rrs.iloc[:,i440].values.astype(np.float64)
+    rrs_555 = rrs.iloc[:,i555].values.astype(np.float64) 
+    bbp_s = 2.0 * (1 - 1.2 * np.exp(-0.9 * rrs_440 / rrs_555))
     bbp = (443 / wavelengths.reshape(-1, 1)) ** bbp_s
 
     Rrs_np = rrs.values
